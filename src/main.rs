@@ -60,21 +60,22 @@ fn r() -> f32 {
 // - Return 1 if no sphere hit was found but ray goes downward (t and n are for ground plane intersection)
 fn trace(o: &V, d: &V) -> (I, F, V) {
     // The world is encoded in g, with rows (numbers) each with 9-bits of info (1 = sphere, 0 = nothing)
-    /*
-    let g = [0x3881E, 0x6C813, 0x4C811, 0x18813, 0x30F9E, 0x60813, 0x44811, 0x6C811, 0x38F9E];
-     * 0 1 1 1 0 0 0 1 1 1 1 1 0 0 1 1 1 1 0 // 0x38F9E
-     * 1 1 0 1 1 0 0 1 0 0 0 0 0 0 1 0 0 0 1 // 0x6C811
-     * 1 0 0 0 1 0 0 1 0 0 0 0 0 0 1 0 0 0 1 // 0x44811
-     * 1 1 0 0 0 0 0 1 0 0 0 0 0 0 1 0 0 1 1 // 0x60813
-     * 0 1 1 0 0 0 0 1 1 1 1 1 0 0 1 1 1 1 0 // 0x30F9E
-     * 0 0 1 1 0 0 0 1 0 0 0 0 0 0 1 0 0 1 1 // 0x18813
-     * 1 0 0 1 1 0 0 1 0 0 0 0 0 0 1 0 0 0 1 // 0x4C811
-     * 1 1 0 1 1 0 0 1 0 0 0 0 0 0 1 0 0 1 1 // 0x6C813
-     * 0 1 1 1 0 0 0 1 0 0 0 0 0 0 1 1 1 1 0 // 0x3881E
-     */
+    /* Original says 'aek'
+      let g[]={247570,280596,280600,249748,18578,18577,231184,16,16};
+
+        16                    1
+        16                    1
+        231184   111    111   1
+        18577       1  1   1  1   1
+        18578       1  1   1  1  1
+        249748   1111  11111  1 1
+        280600  1   1  1      11
+        280596  1   1  1      1 1
+        247570   1111   111   1  1
+    */
 
     let g = [202766, 202779, 6150, 6152, 7579, 5902];
-    /*
+    /* a '.ru' version (traces in about 6 seconds in release mode)
      * 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 // 0
      * 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 // 0
      * 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 // 0
@@ -141,16 +142,16 @@ fn sample(o: &V, d: &V) -> V {
             let l = !(V{x: 9.0 + r(), y: 9.0 + r(), z: 16.0} + h * -1.0);
             let rv = *d + n * (n % *d * -2.0);
 
-            //Calculated the lambertian factor
+            // Calculated the lambertian factor
             let mut b = l % n;
 
-            //Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+            // Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
             if b < 0.0 || trace(&h, &l).0 > 0 {
                 b = 0.0;
             }
 
             // Calculate the color 'p' with diffuse and specular component
-            let p = ((l % rv) * (if b > 0.0 { 1.0 } else {0.0 })).powi(99);
+            let p = ((l % rv) * (if b > 0.0 { 1.0 } else { 0.0 })).powi(99);
 
             match m {
                 // Hit ground plane
@@ -176,28 +177,28 @@ fn sample(o: &V, d: &V) -> V {
 fn main() {
     // Vectors for orienting camera
     let gv = !V{x: -6.0, y: -16.0, z: 0.0};         // Camera direction
-    let av = !(V{x:0.0,y:0.0,z:1.0} ^ gv) * 0.002;  // Camera up vector...Seem Z is pointing up :/ WTF !
+    let av = !(V{x:0.0, y:0.0, z:1.0} ^ gv) * 0.002;// Camera up vector, Z is pointing up
     let bv = !(gv ^ av) * 0.002;                    // The right vector, obtained via traditional cross-product
-    let cv = (av + bv) * -256.0 + gv;               // WTF ? See https://news.ycombinator.com/item?id=6425965.
+    let cv = (av + bv) * -256.0 + gv;               // See https://news.ycombinator.com/item?id=6425965.
 
-    let mut last = 512;
+    // Image data is written to standard out as binary arrays
     let mut out = std::io::stdout();
-    eprint!("Tracing ");
     out.write("P6 512 512 255 ".as_bytes()).unwrap(); // The PPM Header is issued
+
+    // Tracing progress is written to standard error (one . per row)
+    let mut last = 512;
+    eprint!("Tracing ");
     for (y, x) in iproduct!((1..=512i32).rev(), (1..=512i32).rev()) {
         // Reuse the vector class to store not XYZ but a RGB pixel color
         let mut p = V{x: 13.0, y: 13.0, z: 13.0};
-
-        // DEBUG: Visualize (x, y) pixel locations
-        // let mut p = V{x: (x / 2) as F, y: (y / 2) as F,z: 128.0};
 
         // Cast 64 rays per pixel (sub-pixel super sampling)
         for _ in 0..64 {
            // Ray origin random jitter
            let t = av*(r() - 0.5) * 99.0 + bv*(r() - 0.5) * 99.0;
 
-           // Ray originates from (17, 16, 8) jittered by t
-           // Direction is perspective ray based on (x, y) pixel and camera vectors from above
+           // Ray originates from (16, 16, 8) jittered by t
+           // Direction is also jittered which gets you the depth-of-field like blur
            p = sample(
                &(V{x:16.0, y: 16.0, z: 8.0} + t),
                &(!(t * -1.0 + (av*(r() + x as F) + bv * (y as F + r()) + cv) * 16.0))
