@@ -10,7 +10,7 @@ the code a lot and those don't seem to gain you much in Rust. Most of them ARE t
 they just don't shorten the code much.
 
 - Typedefing primities is not a big deal when a lot of your types can be inferred.
-- You CAN'T liberally coerce numbers between float and int in rust
+- You CAN'T liberally coerce floats and bools into integers in Rust
 - Operator overloading is done with traits which are more verbose than the C approach
 
 Still, I'd be curious if just starting over and doing things in a more Rusty idiom if you could do it ... not for
