@@ -132,26 +132,24 @@ fn sample(o: &V, d: &V) -> V {
 
     // Match based on type of hit
     match m {
-        // Sky color as gradient
+        // Sky color approaches black exponentially the steeper the ray angle
         0 => V{x: 0.7, y:0.6, z: 1.0} * (1.0 - d.z).powi(4),
 
         // Hit sphere or plane
         _ => {
-            // Intersection point, light direction, and half vector
+            // Intersection point, light direction (jittered for soft shadows), and reflection direction
+            // Note: Light is a point light located at (9, 9, 16)
             let mut h = *o + *d * t;
             let l = !(V{x: 9.0 + r(), y: 9.0 + r(), z: 16.0} + h * -1.0);
             let rv = *d + n * (n % *d * -2.0);
 
-            // Calculated the lambertian factor
+            // Calculated the lambertian diffuse component
             let mut b = l % n;
 
-            // Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+            // Trace shadow ray (can skip if lambertian is non-positive)
             if b < 0.0 || trace(&h, &l).0 > 0 {
                 b = 0.0;
             }
-
-            // Calculate the color 'p' with diffuse and specular component
-            let p = ((l % rv) * (if b > 0.0 { 1.0 } else { 0.0 })).powi(99);
 
             match m {
                 // Hit ground plane
@@ -168,7 +166,13 @@ fn sample(o: &V, d: &V) -> V {
                 },
 
                 // Hit sphere (do recursive bounce for reflectivity)
-                _ => V{x: p, y: p, z: p} + sample(&h, &rv) * 0.5 //Attenuate color by 50% since it is bouncing (* .5)
+                _ => {
+                    // Combine diffuse with Phong specular component
+                    let p = ((l % rv) * (if b > 0.0 { 1.0 } else { 0.0 })).powi(99);
+
+                    // Trace reflection ray and attenuate by 50% for lost light
+                    V{x: p, y: p, z: p} + sample(&h, &rv) * 0.5
+                }
             }
         }
     }
@@ -176,14 +180,14 @@ fn sample(o: &V, d: &V) -> V {
 
 fn main() {
     // Vectors for orienting camera
-    let gv = !V{x: -6.0, y: -16.0, z: 0.0};         // Camera direction
-    let av = !(V{x:0.0, y:0.0, z:1.0} ^ gv) * 0.002;// Camera up vector, Z is pointing up
-    let bv = !(gv ^ av) * 0.002;                    // The right vector, obtained via traditional cross-product
-    let cv = (av + bv) * -256.0 + gv;               // See https://news.ycombinator.com/item?id=6425965.
+    let gv = !V{x: -6.0, y: -16.0, z: 0.0};             // Camera direction
+    let av = !(V{x:0.0, y:0.0, z:1.0} ^ gv) * 0.002;    // Camera up vector, Z is pointing up
+    let bv = !(gv ^ av) * 0.002;                        // The right vector, obtained via traditional cross-product
+    let cv = (av + bv) * -256.0 + gv;                   // Directional offset to create perspective (1/2 width of scene)
 
     // Image data is written to standard out as binary arrays
     let mut out = std::io::stdout();
-    out.write("P6 512 512 255 ".as_bytes()).unwrap(); // The PPM Header is issued
+    out.write("P6 512 512 255 ".as_bytes()).unwrap();
 
     // Tracing progress is written to standard error (one . per row)
     let mut last = 512;
@@ -198,11 +202,11 @@ fn main() {
            let t = av*(r() - 0.5) * 99.0 + bv*(r() - 0.5) * 99.0;
 
            // Ray originates from (16, 16, 8) jittered by t
-           // Direction is also jittered which gets you the depth-of-field like blur
+           // Direction is also jittered (by same t) which gets you the distance-attenuated blur
            p = sample(
                &(V{x:16.0, y: 16.0, z: 8.0} + t),
                &(!(t * -1.0 + (av*(r() + x as F) + bv * (y as F + r()) + cv) * 16.0))
-           ) * 3.5 + p; // +p for color accumulation
+           ) * 3.5 + p; // +p for color accumulation, 3.5 is just a brightness gain
         }
 
         // Output binary colors to stdout
