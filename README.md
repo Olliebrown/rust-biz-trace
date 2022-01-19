@@ -1,6 +1,6 @@
 # Rust Business Card Raytracer
 A verbose and messy port of the C business card raytracer to Rust. I followed the analysis from Fabian Sanglard
-(found here)[https://fabiensanglard.net/rayTracing_back_of_business_card/] and focused on his commented and spaced
+[found here](https://fabiensanglard.net/rayTracing_back_of_business_card/) and focused on his commented and spaced
 code and not on the heavily minimized version that fits on a card but is not really for human consumption.
 
 ## Could This Ever Fit On a Business Card?
