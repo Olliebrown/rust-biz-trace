@@ -15,3 +15,8 @@ they just don't shorten the code much.
 
 Still, I'd be curious if just starting over and doing things in a more Rusty idiom if you could do it ... not for
 me though! I'm brand new here (just started learning Rust a month ago), and I'm just jazzed I got this to work.
+
+## Feature Branches
+I'm trying out some features on other branches so you should check those out
+
+- **multithtread**: added multi-threading via the threadpool cargo (gotta go fast). Also has adjustable resolution and sample count.
