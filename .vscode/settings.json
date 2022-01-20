@@ -4,6 +4,7 @@
     "iproduct",
     "itertools",
     "lambertian",
-    "powi"
+    "powi",
+    "threadpool"
   ]
 }

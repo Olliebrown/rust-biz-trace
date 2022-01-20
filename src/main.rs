@@ -1,14 +1,28 @@
+// File and standard I/O
+use std::fs::File;
+use std::io::prelude::*;
+
+// For overloading operators
 use std::ops;
-use std::io::Write;
+
+// Random number generation
 use rand::prelude::*;
+
+// Cartesian product iteration
 use itertools::iproduct;
 
-type I = i32;
-type F = f32;
+// Thread pool execution with communication channel
+use threadpool::ThreadPool;
+use std::sync::mpsc::channel;
+
+// Ray-tracing properties
+const WIDTH: i32 = 512;
+const SAMPLES: i32 = 256;
+const GAIN: f32 = 224.0 / SAMPLES as f32;
 
 //Define a vector struct with overloaded operators
 #[derive(Debug, Copy, Clone)]
-struct V { x: F, y: F, z: F }
+struct V { x: f32, y: f32, z: f32 }
 
 // Return as clamped byte-array representing RGB color
 impl V {
@@ -26,15 +40,15 @@ impl ops::Add<V> for V {
 }
 
 // Scaler Multiplication
-impl ops::Mul<F> for V {
+impl ops::Mul<f32> for V {
     type Output = V;
-    fn mul(self, r: F) -> V { V{ x: self.x*r, y: self.y * r, z: self.z * r } }
+    fn mul(self, r: f32) -> V { V{ x: self.x*r, y: self.y * r, z: self.z * r } }
 }
 
 // Dot product
 impl ops::Rem<V> for V {
-    type Output = F;
-    fn rem(self, r: V) -> F { self.x * r.x + self.y * r.y + self.z * r.z }
+    type Output = f32;
+    fn rem(self, r: V) -> f32 { self.x * r.x + self.y * r.y + self.z * r.z }
 }
 
 // Cross product
@@ -58,7 +72,7 @@ fn r() -> f32 {
 // - Return 2 if a sphere hit was found (and also return distance t and normal n).
 // - Return 0 if no sphere hit was found but ray goes upward (t and n are meaningless)
 // - Return 1 if no sphere hit was found but ray goes downward (t and n are for ground plane intersection)
-fn trace(o: &V, d: &V) -> (I, F, V) {
+fn trace(o: &V, d: &V) -> (i32, f32, V) {
     // The world is encoded in g, with rows (numbers) each with 9-bits of info (1 = sphere, 0 = nothing)
     /* Original says 'aek'
       let g[]={247570,280596,280600,249748,18578,18577,231184,16,16};
@@ -103,7 +117,7 @@ fn trace(o: &V, d: &V) -> (I, F, V) {
     for (k, j) in iproduct!(0..19, 0..g.len()) {
         if g[j] & 1<<k > 0 { //For this line j, is there a sphere at column k ?
             // There is a sphere but does the ray hit it ?
-            let p = *o + V{x: -k as F, y: 0.0, z: -(j as F) - 4.0};
+            let p = *o + V{x: -k as f32, y: 0.0, z: -(j as f32) - 4.0};
             let b = p % *d;
             let c = p % p - 1.0;
             let q = b * b - c;
@@ -178,42 +192,65 @@ fn sample(o: &V, d: &V) -> V {
     }
 }
 
+fn trace_pixel(x: i32, y: i32, av: V, bv: V, cv: V, i: usize) -> (usize, V) {
+    // Reuse the vector class to store not XYZ but a RGB pixel color
+    let mut p = V{x: 13.0, y: 13.0, z: 13.0};
+
+    // Cast SAMPLES rays per pixel (sub-pixel super sampling)
+    for _ in 0..SAMPLES {
+        // Ray origin random jitter
+        let t = av*(r() - 0.5) * 99.0 + bv*(r() - 0.5) * 99.0;
+
+        // Ray originates from (16, 16, 8) jittered by t
+        // Direction is also jittered (by same t) which gets you the distance-attenuated blur
+        p = sample(
+            &(V{x:16.0, y: 16.0, z: 8.0} + t),
+            &(!(t * -1.0 + (av*(r() + x as f32) + bv * (y as f32 + r()) + cv) * 16.0))
+        ) * GAIN + p; // +p for color accumulation, GAIN is just a brightness gain
+    }
+
+    // Return the color and index
+    (i, p)
+}
+
 fn main() {
     // Vectors for orienting camera
     let gv = !V{x: -6.0, y: -16.0, z: 0.0};             // Camera direction
     let av = !(V{x:0.0, y:0.0, z:1.0} ^ gv) * 0.002;    // Camera up vector, Z is pointing up
     let bv = !(gv ^ av) * 0.002;                        // The right vector, obtained via traditional cross-product
-    let cv = (av + bv) * -256.0 + gv;                   // Directional offset to create perspective (1/2 width of scene)
-
-    // Image data is written to standard out as binary arrays
-    let mut out = std::io::stdout();
-    out.write("P6 512 512 255 ".as_bytes()).unwrap();
+    let cv = (av + bv) * -(WIDTH as f32/2.0) + gv;      // Directional offset to create perspective (1/2 width of scene)
 
     // Tracing progress is written to standard error (one . per row)
-    let mut last = 512;
-    eprint!("Tracing ");
-    for (y, x) in iproduct!((1..=512i32).rev(), (1..=512i32).rev()) {
-        // Reuse the vector class to store not XYZ but a RGB pixel color
-        let mut p = V{x: 13.0, y: 13.0, z: 13.0};
+    eprint!("Tracing ...");
 
-        // Cast 64 rays per pixel (sub-pixel super sampling)
-        for _ in 0..64 {
-           // Ray origin random jitter
-           let t = av*(r() - 0.5) * 99.0 + bv*(r() - 0.5) * 99.0;
+    // Create a thread pool and a channel for thread communication
+    let pool = ThreadPool::new(12);
+    let (tx, rx) = channel();
 
-           // Ray originates from (16, 16, 8) jittered by t
-           // Direction is also jittered (by same t) which gets you the distance-attenuated blur
-           p = sample(
-               &(V{x:16.0, y: 16.0, z: 8.0} + t),
-               &(!(t * -1.0 + (av*(r() + x as F) + bv * (y as F + r()) + cv) * 16.0))
-           ) * 3.5 + p; // +p for color accumulation, 3.5 is just a brightness gain
-        }
+    // Create tasks for all the pixels
+    let pixel_tasks = iproduct!(
+        (1..=WIDTH).rev(), (1..=WIDTH).rev()
+    );
 
-        // Output binary colors to stdout
-        out.write(&p.c()).unwrap();
-
-        // Output progress to stderr
-        if y < last { eprint!("."); last -= 1; }
+    // Add each task to the thread pool and queue them up to send out their results
+    let mut task_count = 0;
+    for (i, pixel) in pixel_tasks.enumerate() {
+        let tx = tx.clone();
+        pool.execute(move || tx.send(trace_pixel(pixel.1, pixel.0, av, bv, cv, i)).unwrap());
+        task_count += 1;
     }
+
+    // Receive all the pixel color results collected in a vector, then sort the vector
+    let mut colors = rx.iter().take(task_count).collect::<Vec<(usize, V)>>();
+    colors.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Write the results to 'result.ppm'
+    let mut out = File::create("result.ppm").unwrap();
+    out.write(format!("P6 {} {} 255 ", WIDTH, WIDTH).as_bytes()).unwrap();
+    for color in colors.iter() {
+        out.write(&color.1.c()).unwrap();
+    }
+
+    // Indicate completion
     eprintln!(" done.");
 }
